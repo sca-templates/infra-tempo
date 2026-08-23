@@ -1,0 +1,91 @@
+# =============================================================================
+# Tempo Validate Pipeline — PRs and pushes to main
+# Static validation of configs and docs without needing the running stack
+# =============================================================================
+
+name: Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  config:
+    name: Config
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Lint shell scripts
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: "./scripts"
+
+      - name: Validate compose file
+        run: |
+          cp .env.example .env
+          docker compose -f compose.yml config --quiet
+
+      - name: Parse Tempo config
+        run: python3 -c "import yaml; yaml.safe_load(open('tempo/tempo.yml')); print('[OK] tempo.yml parses')"
+
+      - name: Check Tempo config invariants
+        run: |
+          python3 - <<'PY'
+          import yaml
+          d = yaml.safe_load(open("tempo/tempo.yml"))
+          receivers = d["distributor"]["receivers"]
+          assert set(receivers) == {"otlp"}, "OTLP-only ingest required"
+          assert d["server"]["http_listen_port"] == 3200
+          assert d["storage"]["trace"]["backend"] == "local", "dev backend is local"
+          assert "block_retention" in d["compactor"]["compaction"], "retention must be set"
+          ds = yaml.safe_load(open("tempo/datasource-provisioning.yaml"))
+          assert ds["datasources"][0]["uid"] == "tempo"
+          print("[OK] tempo config invariants hold")
+          PY
+
+      - name: Check .env.example has all required keys
+        run: |
+          REQUIRED_KEYS=(
+            ENVIRONMENT
+            TEMPO_HTTP_PORT
+            TEMPO_OTLP_GRPC_PORT
+            TEMPO_OTLP_HTTP_PORT
+          )
+          for key in "${REQUIRED_KEYS[@]}"; do
+            grep -q "^${key}=" .env.example \
+              && echo "[OK] ${key}" \
+              || (echo "[FAIL] Missing key: ${key}" && exit 1)
+          done
+
+  markdown:
+    name: Markdown
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: markdownlint
+        run: npx --yes markdownlint-cli2 README.md AGENTS.md CLAUDE.md .github/PULL_REQUEST_TEMPLATE.md .github/CONTRIBUTING.md docs/**/*.md .claude/skills/**/SKILL.md .opencode/command/*.md
+
+      - name: Check links
+        run: |
+          for f in README.md .github/PULL_REQUEST_TEMPLATE.md .github/CONTRIBUTING.md; do
+            npx --yes markdown-link-check \
+              -c .github/markdown-link-check.json \
+              "$f"
+          done

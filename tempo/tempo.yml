@@ -1,0 +1,38 @@
+# tempo.yml — Single-binary dev configuration.
+# OTLP is the only ingest path; TraceQL queries over HTTP :3200.
+# Ports are the standard ones (3200 API, 4317/4318 OTLP) and live here
+# once; .env documents them for the rest of the stack.
+
+server:
+  http_listen_port: 3200
+
+# Dev storage: local filesystem (prod uses object storage via infra-kubernetes)
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/blocks
+    wal:
+      path: /var/tempo/wal
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: "0.0.0.0:4317"
+        http:
+          endpoint: "0.0.0.0:4318"
+
+ingester:
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    block_retention: 24h
+
+metrics_generator:
+  registry:
+    external_labels:
+      source: tempo
+      cluster: sca-dev

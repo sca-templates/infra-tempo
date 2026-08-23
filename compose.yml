@@ -1,0 +1,34 @@
+# tempo — Distributed tracing backend (OTLP ingest, TraceQL queries)
+# Local:  make up   (no secrets required — stateless telemetry store)
+# Prod:   declared in infra-kubernetes
+#
+# network_mode: host — telemetry tier convention (see infra-prometheus):
+# binds 0.0.0.0 so both host-net and bridge siblings can push traces;
+# queries come from Grafana on the same host (http://localhost:3200).
+name: tempo
+
+services:
+
+  tempo:
+    image: grafana/tempo:2.6.1
+    container_name: tempo
+    restart: unless-stopped
+    command: ["-config.file=/etc/tempo/tempo.yml"]
+    volumes:
+      - ./tempo/tempo.yml:/etc/tempo/tempo.yml:ro
+      - tempo-data:/var/tempo
+    network_mode: host
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3200/ready || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.75"
+          memory: 768M
+
+volumes:
+  tempo-data:
